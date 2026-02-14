@@ -13,6 +13,7 @@ config/
 # Build directories
 build/
 _build/
+build-curl-check/
 cmake-build-*/
 AlpacaCorebuild/
 AlpacaHTTPbuild/
