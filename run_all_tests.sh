@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 CORE_DIR="${ROOT_DIR}/AlpacaCore"
 HTTP_DIR="${ROOT_DIR}/AlpacaHTTP"
+AGENT_DIR="${ROOT_DIR}/AlpacaAgent"
 HTTP_BEAST="${ALPACAHTTP_USE_BOOST_BEAST:-OFF}"
 CORE_VENDORS="${ALPACACORE_ENABLE_ALL_VENDORS:-ON}"
 
@@ -18,7 +19,13 @@ if [[ ! -d "${HTTP_DIR}" ]]; then
   exit 1
 fi
 
+if [[ ! -d "${AGENT_DIR}" ]]; then
+  echo "AlpacaAgent not found at ${AGENT_DIR}"
+  exit 1
+fi
+
 rm -rf "${CORE_DIR}/build" "${HTTP_DIR}/build"
+rm -rf "${AGENT_DIR}/build"
 
 if [[ "${OSTYPE:-}" == "darwin"* ]]; then
   PARALLEL="$(sysctl -n hw.ncpu)"
@@ -44,3 +51,9 @@ cmake -S "${HTTP_DIR}" -B "${HTTP_DIR}/build" \
   -DALPACACORE_ENABLE_ALL_VENDORS="${CORE_VENDORS}"
 cmake --build "${HTTP_DIR}/build" --parallel "${PARALLEL}"
 ctest --test-dir "${HTTP_DIR}/build" --output-on-failure -j "${PARALLEL}"
+
+echo "== AlpacaAgent =="
+cmake -S "${AGENT_DIR}" -B "${AGENT_DIR}/build" \
+  -DALPACAAGENT_BUILD_TESTS=ON
+cmake --build "${AGENT_DIR}/build" --parallel "${PARALLEL}"
+ctest --test-dir "${AGENT_DIR}/build" --output-on-failure -j "${PARALLEL}"

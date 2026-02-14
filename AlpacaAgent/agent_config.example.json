@@ -1,0 +1,6 @@
+{
+  "port": 6810,
+  "threadPoolSize": 4,
+  "disconnectThresholdSeconds": 15,
+  "persistencePath": "config/agent_state.json"
+}

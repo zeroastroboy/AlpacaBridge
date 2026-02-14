@@ -4,6 +4,7 @@ setlocal
 set "ROOT_DIR=%~dp0"
 set "CORE_DIR=%ROOT_DIR%AlpacaCore"
 set "HTTP_DIR=%ROOT_DIR%AlpacaHTTP"
+set "AGENT_DIR=%ROOT_DIR%AlpacaAgent"
 if "%ALPACAHTTP_USE_BOOST_BEAST%"=="" set "ALPACAHTTP_USE_BOOST_BEAST=OFF"
 if "%ALPACACORE_ENABLE_ALL_VENDORS%"=="" set "ALPACACORE_ENABLE_ALL_VENDORS=ON"
 
@@ -17,8 +18,14 @@ if not exist "%HTTP_DIR%" (
   exit /b 1
 )
 
+if not exist "%AGENT_DIR%" (
+  echo AlpacaAgent not found at %AGENT_DIR%
+  exit /b 1
+)
+
 if exist "%CORE_DIR%build" rmdir /s /q "%CORE_DIR%build"
 if exist "%HTTP_DIR%build" rmdir /s /q "%HTTP_DIR%build"
+if exist "%AGENT_DIR%build" rmdir /s /q "%AGENT_DIR%build"
 
 set "BUILD_CONFIG_ARG="
 set "CTEST_CONFIG_ARG="
@@ -41,6 +48,14 @@ if errorlevel 1 exit /b 1
 cmake --build "%HTTP_DIR%build" %BUILD_CONFIG_ARG%
 if errorlevel 1 exit /b 1
 ctest --test-dir "%HTTP_DIR%build" --output-on-failure %CTEST_CONFIG_ARG%
+if errorlevel 1 exit /b 1
+
+echo == AlpacaAgent ==
+cmake -S "%AGENT_DIR%" -B "%AGENT_DIR%build" -DALPACAAGENT_BUILD_TESTS=ON
+if errorlevel 1 exit /b 1
+cmake --build "%AGENT_DIR%build" %BUILD_CONFIG_ARG%
+if errorlevel 1 exit /b 1
+ctest --test-dir "%AGENT_DIR%build" --output-on-failure %CTEST_CONFIG_ARG%
 if errorlevel 1 exit /b 1
 
 endlocal

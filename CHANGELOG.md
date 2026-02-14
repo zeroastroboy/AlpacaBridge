@@ -5,7 +5,30 @@ All notable changes to AlpacaBridge will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-AlpacaBridge is a workspace that combines [AlpacaCore](AlpacaCore/README.md) and [AlpacaHTTP](AlpacaHTTP/README.md).
+AlpacaBridge is a workspace that combines [AlpacaCore](AlpacaCore/README.md), [AlpacaHTTP](AlpacaHTTP/README.md), and [AlpacaAgent](AlpacaAgent/README.md).
+
+## [0.11.0] - 2026-02-14
+
+### Added
+- **AlpacaAgent** (Workspace)
+  - Client-agnostic sequencing continuity service for run state across client disconnects.
+  - Checkpoint/heartbeat API: `POST /agent/v1/checkpoints`, NINA alias `POST /agent/nina/checkpoint`, generic `POST /agent/{clientType}/checkpoint`.
+  - Run and event query API: `GET /agent/runs`, `GET /agent/runs/{runId}`, `GET /agent/runs/{runId}/events?since=<id>`.
+  - Capabilities and health: `GET /agent/v1/capabilities`, `GET /health`.
+  - Run registry with monotonic checkpoint handling and disk persistence.
+  - C++ server (`alpacaagent_server`) with configurable port (default 6810).
+  - Example config `agent_config.example.json`, design notes, and unit tests for run registry.
+- **NINA Plugin** (AlpacaAgent)
+  - C# plugin for [NINA](https://nighttime-imaging.eu/) that sends checkpoint heartbeats to AlpacaAgent for sequence continuity.
+  - Sequence JSON summary reader and checkpoint builder for run state sync; supports reconnect workflows when the client disconnects.
+  - Plugin lives under `AlpacaAgent/NINAPlugin/`; see `AlpacaAgent/NINAPlugin/README.md` for build and usage.
+
+### Changed
+- **Build and test scripts** (AlpacaBridge)
+  - `build_and_run.sh` / `build_and_run.cmd`: build and run AlpacaAgent when present; optional via `ALPACABRIDGE_BUILD_AGENT` (default ON).
+  - `run_all_tests.sh` / `run_all_tests.cmd`: include AlpacaAgent tests when `ALPACABRIDGE_BUILD_AGENT` is ON.
+- **README** (AlpacaBridge)
+  - Build and run section now covers AlpacaCore, AlpacaHTTP, and AlpacaAgent; root scripts build all three and start AlpacaHTTP and AlpacaAgent. Added AlpacaAgent to intro, key features, and Learn more; documented `ALPACABRIDGE_BUILD_AGENT` option.
 
 ## [0.10.0] - 2026-02-03
 

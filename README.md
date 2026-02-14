@@ -2,7 +2,7 @@
 
 <img src="https://www.openastro.net/wp-content/uploads/2026/01/AlpacaBridge.png" alt="AlpacaBridge logo" width="420">
 
-AlpacaBridge is a unified workspace for building, testing, and running a complete ASCOM Alpaca server. It combines AlpacaCore (driver library) and AlpacaHTTP (HTTP server) with AI-assisted development tools and ConformU-validated drivers.
+AlpacaBridge is a unified workspace for building, testing, and running a complete ASCOM Alpaca server. It combines **AlpacaCore** (driver library), **AlpacaHTTP** (HTTP server), and **AlpacaAgent** (sequencing continuity service) with AI-assisted development tools and ConformU-validated drivers. See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 **Intrested? Want to help?** Join our [Discord Support Channel](https://discord.com/channels/1092619106282393610/1092619106282393613)
 
@@ -19,6 +19,7 @@ Building the Future of Astrophotography & EAA with AlpacaBridge, an ASCOM Alpaca
 **Key Features:**
 - **Complete Alpaca Server** - Build and run a full-featured ASCOM Alpaca server with web UI
 - **Comprehensive Driver Support** - Pre-built drivers for ZWO cameras, switches, and focusers, plus iOptron telescopes (all ConformU validated)
+- **Sequencing Continuity (AlpacaAgent)** - Server-side checkpoint and run state so clients (e.g. NINA) can survive disconnects and reconnect with context
 - **AI-Assisted Development** - Build custom drivers for any vendor device using AI guidance (see [AGENTS.md](AGENTS.md))
 - **Convenience Scripts** - One-command build, test, and run workflows
 - **Production Ready** - All drivers are ConformU validated for ASCOM Alpaca specification compliance
@@ -39,7 +40,7 @@ Windows (CMD/PowerShell):
 run_all_tests.cmd
 ```
 
-### Build and run the HTTP server
+### Build and run (AlpacaCore, AlpacaHTTP, AlpacaAgent)
 
 macOS/Linux:
 ```sh
@@ -52,13 +53,13 @@ Windows (CMD/PowerShell):
 build_and_run.cmd
 ```
 
-When the server starts, it prints:
-`AlpacaHTTP is running. Open http://localhost:6800/ in your browser.`
+The root scripts build AlpacaCore, AlpacaHTTP, and AlpacaAgent together, then start AlpacaHTTP and AlpacaAgent. AlpacaHTTP: http://localhost:6800/ ; AlpacaAgent checkpoint API: `POST http://localhost:6810/agent/v1/checkpoints`.
 
 ## Optional settings
 
 - `ALPACAHTTP_USE_BOOST_BEAST` (default: OFF): set to ON to build AlpacaHTTP with Boost.Beast.
 - `ALPACACORE_ENABLE_ALL_VENDORS` (default: ON): set to OFF to disable vendor drivers.
+- `ALPACABRIDGE_BUILD_AGENT` (default: ON): set to OFF to skip building and running AlpacaAgent in the root scripts.
 - `ALPACA_BUILD_CONFIG` (Windows only): set to `Debug` or `Release` for multi-config generators.
 
 ## Installation (Linux)
@@ -97,5 +98,6 @@ For deeper details, see the project READMEs:
 
 - [AlpacaCore/README.md](AlpacaCore/README.md) - Core library and driver development
 - [AlpacaHTTP/README.md](AlpacaHTTP/README.md) - HTTP server implementation
+- [AlpacaAgent/README.md](AlpacaAgent/README.md) - Sequencing continuity service and checkpoint API
 - [AGENTS.md](AGENTS.md) - AI-assisted development workflow and rules
 - [AlpacaCore/SUPPORTED-DRIVERS.md](AlpacaCore/SUPPORTED-DRIVERS.md) - List of validated drivers
