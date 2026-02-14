@@ -12,12 +12,14 @@ When a control client disconnects (Wi-Fi drop, app crash, laptop sleep), the run
 - Tracks run state with monotonic checkpoint handling
 - Persists run/event state to disk
 - Provides run/event query endpoints for reconnect workflows
+- Includes a NINA-side SDK (`AlpacaAgent/NINAPlugin`) with local spool/replay so transient network outages do not lose checkpoints
 
 ## API
 
 - `POST /agent/v1/checkpoints` (canonical, client-agnostic)
 - `POST /agent/nina/checkpoint` (NINA compatibility alias)
 - `POST /agent/{clientType}/checkpoint` (generic compatibility alias)
+- `POST /agent/runs/{runId}/action` (run control: pause/resume/acknowledge)
 - `GET /agent/runs`
 - `GET /agent/runs/{runId}`
 - `GET /agent/runs/{runId}/events?since=<id>`
@@ -55,3 +57,9 @@ If no config file exists, defaults are used.
 ## Config file example
 
 See `AlpacaAgent/agent_config.example.json`.
+
+### Run control policy settings
+
+- `autoPauseOnDisconnect` (default `true`)
+- `autoResumeOnReconnect` (default `true`)
+- `holdEngageAfterDisconnectSeconds` (default `10`)

@@ -16,12 +16,16 @@ AlpacaBridge is a workspace that combines [AlpacaCore](AlpacaCore/README.md), [A
   - Run and event query API: `GET /agent/runs`, `GET /agent/runs/{runId}`, `GET /agent/runs/{runId}/events?since=<id>`.
   - Capabilities and health: `GET /agent/v1/capabilities`, `GET /health`.
   - Run registry with monotonic checkpoint handling and disk persistence.
+  - Run control policy: configurable auto-pause on disconnect, auto-resume on reconnect, and hold period before engaging; `apply_run_action` API for run control; control state and hold state tracked per run.
   - C++ server (`alpacaagent_server`) with configurable port (default 6810).
   - Example config `agent_config.example.json`, design notes, and unit tests for run registry.
 - **NINA Plugin** (AlpacaAgent)
   - C# plugin for [NINA](https://nighttime-imaging.eu/) that sends checkpoint heartbeats to AlpacaAgent for sequence continuity.
   - Sequence JSON summary reader and checkpoint builder for run state sync; supports reconnect workflows when the client disconnects.
+  - Resilient checkpoint dispatch with spool/session handling and unit tests.
   - Plugin lives under `AlpacaAgent/NINAPlugin/`; see `AlpacaAgent/NINAPlugin/README.md` for build and usage.
+- **Supported Drivers** (AlpacaCore)
+  - SynScan telescope driver documentation: SynScan V3/V4 (SkyWatcher EQ6, Orion Atlas EQ-G), USB/Serial via hand controller, ConformU validation. Soft-home behavior for mounts without hardware home (align toward Polaris on power-on).
 
 ### Changed
 - **Build and test scripts** (AlpacaBridge)
@@ -29,6 +33,8 @@ AlpacaBridge is a workspace that combines [AlpacaCore](AlpacaCore/README.md), [A
   - `run_all_tests.sh` / `run_all_tests.cmd`: include AlpacaAgent tests when `ALPACABRIDGE_BUILD_AGENT` is ON.
 - **README** (AlpacaBridge)
   - Build and run section now covers AlpacaCore, AlpacaHTTP, and AlpacaAgent; root scripts build all three and start AlpacaHTTP and AlpacaAgent. Added AlpacaAgent to intro, key features, and Learn more; documented `ALPACABRIDGE_BUILD_AGENT` option.
+- **WeeWX ObservingConditions** (AlpacaCore)
+  - Driver and build updates for WeeWX observing conditions support.
 
 ## [0.10.0] - 2026-02-03
 

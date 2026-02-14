@@ -558,8 +558,10 @@ HttpServer::HttpResponse HttpServer::route(const ParsedRequest& request) {
             "OK",
             nlohmann::json{{"checkpointEndpoint", "/agent/v1/checkpoints"},
                            {"checkpointAliases", nlohmann::json::array({"/agent/nina/checkpoint", "/agent/{clientType}/checkpoint"})},
+                           {"runActionEndpointTemplate", "/agent/runs/{runId}/action"},
                            {"supportsClientAgnosticRuns", true},
-                           {"supportsEvents", true}});
+                           {"supportsEvents", true},
+                           {"supportsRunControl", true}});
     }
 
     const bool is_canonical_checkpoint =
@@ -627,6 +629,23 @@ HttpServer::HttpResponse HttpServer::route(const ParsedRequest& request) {
         }
 
         return json_response(200, "OK", events_json.value());
+    }
+
+    if (request.method == "POST" && parsed_path.segments.size() == 4 &&
+        parsed_path.segments[0] == "agent" && parsed_path.segments[1] == "runs" &&
+        parsed_path.segments[3] == "action") {
+        nlohmann::json payload;
+        try {
+            payload = request.body.empty() ? nlohmann::json::object() : nlohmann::json::parse(request.body);
+        } catch (...) {
+            return json_response(400, "Bad Request", nlohmann::json{{"accepted", false}, {"error", "invalid_json"}});
+        }
+
+        auto result = registry_.apply_run_action(parsed_path.segments[2], payload);
+        const bool accepted = result.value("accepted", false);
+        const std::string error = result.value("error", std::string{});
+        const auto status = accepted ? 200 : (error == "run_not_found" ? 404 : 400);
+        return json_response(status, accepted ? "OK" : "Bad Request", std::move(result));
     }
 
     if (request.method != "GET" && request.method != "POST") {

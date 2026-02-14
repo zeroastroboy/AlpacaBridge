@@ -2,5 +2,8 @@
   "port": 6810,
   "threadPoolSize": 4,
   "disconnectThresholdSeconds": 15,
+  "autoPauseOnDisconnect": true,
+  "autoResumeOnReconnect": true,
+  "holdEngageAfterDisconnectSeconds": 10,
   "persistencePath": "config/agent_state.json"
 }

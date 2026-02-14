@@ -35,6 +35,7 @@ struct AppConfig {
     int port = 6810;
     std::size_t thread_pool_size = 4;
     std::chrono::seconds disconnect_threshold = std::chrono::seconds(15);
+    alpacaagent::RunControlPolicy control_policy{};
     std::string persistence_path = "config/agent_state.json";
 };
 
@@ -63,6 +64,17 @@ bool load_config_file(const std::string& path, AppConfig& config) {
     }
     if (json.contains("disconnectThresholdSeconds") && json.at("disconnectThresholdSeconds").is_number_integer()) {
         config.disconnect_threshold = std::chrono::seconds(json.at("disconnectThresholdSeconds").get<int>());
+    }
+    if (json.contains("autoPauseOnDisconnect") && json.at("autoPauseOnDisconnect").is_boolean()) {
+        config.control_policy.auto_pause_on_disconnect = json.at("autoPauseOnDisconnect").get<bool>();
+    }
+    if (json.contains("autoResumeOnReconnect") && json.at("autoResumeOnReconnect").is_boolean()) {
+        config.control_policy.auto_resume_on_reconnect = json.at("autoResumeOnReconnect").get<bool>();
+    }
+    if (json.contains("holdEngageAfterDisconnectSeconds") &&
+        json.at("holdEngageAfterDisconnectSeconds").is_number_integer()) {
+        config.control_policy.hold_engage_after_disconnect =
+            std::chrono::seconds(json.at("holdEngageAfterDisconnectSeconds").get<int>());
     }
     if (json.contains("persistencePath") && json.at("persistencePath").is_string()) {
         config.persistence_path = json.at("persistencePath").get<std::string>();
@@ -118,7 +130,10 @@ int main(int argc, char** argv) {
         app_config.thread_pool_size = 1;
     }
 
-    alpacaagent::RunRegistry registry(app_config.persistence_path, app_config.disconnect_threshold);
+    alpacaagent::RunRegistry registry(
+        app_config.persistence_path,
+        app_config.disconnect_threshold,
+        app_config.control_policy);
     registry.load();
 
     alpacaagent::HttpServer server(alpacaagent::ServerConfig{app_config.port, app_config.thread_pool_size}, registry);
@@ -131,6 +146,7 @@ int main(int argc, char** argv) {
     std::cout << "AlpacaAgent listening on http://localhost:" << app_config.port << "\n";
     std::cout << "Checkpoint endpoint: POST /agent/v1/checkpoints\n";
     std::cout << "NINA compatibility endpoint: POST /agent/nina/checkpoint\n";
+    std::cout << "Run action endpoint: POST /agent/runs/{runId}/action\n";
 
     while (!g_should_stop.load() && server.is_running()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));

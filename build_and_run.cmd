@@ -10,6 +10,7 @@ set "HTTP_BUILD_DIR=%HTTP_DIR%\\build"
 set "AGENT_BUILD_DIR=%AGENT_DIR%\\build"
 if "%ALPACAHTTP_USE_BOOST_BEAST%"=="" set "ALPACAHTTP_USE_BOOST_BEAST=OFF"
 if "%ALPACACORE_ENABLE_ALL_VENDORS%"=="" set "ALPACACORE_ENABLE_ALL_VENDORS=ON"
+if "%ALPACACORE_ENABLE_WEEWX%"=="" set "ALPACACORE_ENABLE_WEEWX=ON"
 
 if not exist "%CORE_DIR%" (
   echo AlpacaCore not found at %CORE_DIR%
@@ -42,7 +43,7 @@ if not "%NUMBER_OF_PROCESSORS%"=="" (
 )
 
 echo == AlpacaCore ==
-cmake -S "%CORE_DIR%" -B "%CORE_BUILD_DIR%" -DALPACACORE_ENABLE_ALL_VENDORS=%ALPACACORE_ENABLE_ALL_VENDORS%
+cmake -S "%CORE_DIR%" -B "%CORE_BUILD_DIR%" -DALPACACORE_ENABLE_ALL_VENDORS=%ALPACACORE_ENABLE_ALL_VENDORS% -DALPACACORE_ENABLE_WEEWX=%ALPACACORE_ENABLE_WEEWX% -DALPACACORE_REQUIRE_WEEWX=%ALPACACORE_ENABLE_WEEWX%
 if errorlevel 1 exit /b 1
 cmake --build "%CORE_BUILD_DIR%" --target clean %BUILD_CONFIG_ARG%
 if errorlevel 1 exit /b 1
@@ -50,7 +51,7 @@ cmake --build "%CORE_BUILD_DIR%" %BUILD_CONFIG_ARG% %PARALLEL_ARG%
 if errorlevel 1 exit /b 1
 
 echo == AlpacaHTTP ==
-cmake -S "%HTTP_DIR%" -B "%HTTP_BUILD_DIR%" -DALPACAHTTP_USE_BOOST_BEAST=%ALPACAHTTP_USE_BOOST_BEAST% -DALPACACORE_ENABLE_ALL_VENDORS=%ALPACACORE_ENABLE_ALL_VENDORS%
+cmake -S "%HTTP_DIR%" -B "%HTTP_BUILD_DIR%" -DALPACAHTTP_USE_BOOST_BEAST=%ALPACAHTTP_USE_BOOST_BEAST% -DALPACACORE_ENABLE_ALL_VENDORS=%ALPACACORE_ENABLE_ALL_VENDORS% -DALPACACORE_ENABLE_WEEWX=%ALPACACORE_ENABLE_WEEWX% -DALPACACORE_REQUIRE_WEEWX=%ALPACACORE_ENABLE_WEEWX%
 if errorlevel 1 exit /b 1
 cmake --build "%HTTP_BUILD_DIR%" --target clean %BUILD_CONFIG_ARG%
 if errorlevel 1 exit /b 1
@@ -100,7 +101,31 @@ if not exist "%AGENT_EXE%" (
   exit /b 1
 )
 
-for /f %%I in (`powershell -NoProfile -Command "$exe='%AGENT_EXE%';$cfg='%AGENT_DIR%\agent_config.json';if(Test-Path $cfg){$p=Start-Process -FilePath $exe -ArgumentList @('--config',$cfg) -PassThru}else{$p=Start-Process -FilePath $exe -PassThru};$p.Id"`) do set "AGENT_PID=%%I"
+set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+if not exist "%POWERSHELL_EXE%" (
+  where /q powershell.exe
+  if errorlevel 1 (
+    where /q pwsh.exe
+    if errorlevel 1 (
+      echo Could not find PowerShell executable. Install Windows PowerShell or PowerShell 7.
+      exit /b 1
+    )
+    set "POWERSHELL_EXE=pwsh.exe"
+  ) else (
+    set "POWERSHELL_EXE=powershell.exe"
+  )
+)
+set "AGENT_PID_FILE=%TEMP%\alpacaagent_pid_%RANDOM%_%RANDOM%.txt"
+"%POWERSHELL_EXE%" -NoProfile -Command "$ErrorActionPreference='Stop';$exe='%AGENT_EXE%';$cfg='%AGENT_DIR%\agent_config.json';if(Test-Path $cfg){$p=Start-Process -FilePath $exe -ArgumentList @('--config',$cfg) -PassThru}else{$p=Start-Process -FilePath $exe -PassThru};Set-Content -Path '%AGENT_PID_FILE%' -Value $p.Id -Encoding ascii"
+if errorlevel 1 (
+  if exist "%AGENT_PID_FILE%" del /f /q "%AGENT_PID_FILE%" >nul 2>&1
+  echo Failed to start AlpacaAgent process
+  exit /b 1
+)
+if exist "%AGENT_PID_FILE%" (
+  set /p AGENT_PID=<"%AGENT_PID_FILE%"
+  del /f /q "%AGENT_PID_FILE%" >nul 2>&1
+)
 if "%AGENT_PID%"=="" (
   echo Failed to start AlpacaAgent process
   exit /b 1

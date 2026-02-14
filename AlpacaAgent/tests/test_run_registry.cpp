@@ -24,7 +24,12 @@ int main() {
         std::filesystem::remove(state_path, ec);
     }
 
-    alpacaagent::RunRegistry registry(state_path, std::chrono::seconds(1), 128);
+    alpacaagent::RunControlPolicy policy;
+    policy.auto_pause_on_disconnect = true;
+    policy.auto_resume_on_reconnect = true;
+    policy.hold_engage_after_disconnect = std::chrono::seconds(0);
+
+    alpacaagent::RunRegistry registry(state_path, std::chrono::seconds(1), policy, 128);
 
     const nlohmann::json checkpoint_one{
         {"apiVersion", "1.0"},
@@ -66,6 +71,20 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(1300));
     const auto runs_after_timeout = registry.list_runs();
     assert(!runs_after_timeout.at("runs").at(0).value("clientConnected", true));
+    assert(runs_after_timeout.at("runs").at(0).value("controlState", std::string()) == "PauseRequested");
+    assert(runs_after_timeout.at("runs").at(0).value("holdEngaged", true));
+
+    const auto manual_resume = registry.apply_run_action(
+        "run-1",
+        nlohmann::json{{"action", "ResumeRequested"}, {"source", "test"}, {"reason", "manual"}});
+    assert(manual_resume.value("accepted", false));
+    assert(manual_resume.at("runState").value("controlState", std::string()) == "ResumeRequested");
+
+    const auto ack = registry.apply_run_action(
+        "run-1",
+        nlohmann::json{{"action", "AcknowledgeControl"}, {"source", "test"}});
+    assert(ack.value("accepted", false));
+    assert(ack.at("runState").value("controlState", std::string()) == "None");
 
     const auto events = registry.get_events("run-1", std::nullopt);
     assert(events.has_value());

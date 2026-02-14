@@ -7,6 +7,7 @@ HTTP_DIR="${ROOT_DIR}/AlpacaHTTP"
 AGENT_DIR="${ROOT_DIR}/AlpacaAgent"
 HTTP_BEAST="${ALPACAHTTP_USE_BOOST_BEAST:-OFF}"
 CORE_VENDORS="${ALPACACORE_ENABLE_ALL_VENDORS:-ON}"
+CORE_WEEWX="${ALPACACORE_ENABLE_WEEWX:-ON}"
 INSTALL_UDEV_RULES="${ALPACA_INSTALL_UDEV_RULES:-ON}"
 
 if [[ ! -d "${CORE_DIR}" ]]; then
@@ -59,11 +60,15 @@ build_make() {
     "AlpacaHTTP")
       cmake -S "${project_dir}" -B "${project_dir}/build" \
         -DALPACAHTTP_USE_BOOST_BEAST="${HTTP_BEAST}" \
-        -DALPACACORE_ENABLE_ALL_VENDORS="${CORE_VENDORS}"
+        -DALPACACORE_ENABLE_ALL_VENDORS="${CORE_VENDORS}" \
+        -DALPACACORE_ENABLE_WEEWX="${CORE_WEEWX}" \
+        -DALPACACORE_REQUIRE_WEEWX="${CORE_WEEWX}"
       ;;
     "AlpacaCore")
       cmake -S "${project_dir}" -B "${project_dir}/build" \
-        -DALPACACORE_ENABLE_ALL_VENDORS="${CORE_VENDORS}"
+        -DALPACACORE_ENABLE_ALL_VENDORS="${CORE_VENDORS}" \
+        -DALPACACORE_ENABLE_WEEWX="${CORE_WEEWX}" \
+        -DALPACACORE_REQUIRE_WEEWX="${CORE_WEEWX}"
       ;;
     *)
       cmake -S "${project_dir}" -B "${project_dir}/build"

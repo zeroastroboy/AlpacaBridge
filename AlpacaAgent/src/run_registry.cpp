@@ -66,9 +66,11 @@ std::string json_string_or_empty(const nlohmann::json& value) {
 
 RunRegistry::RunRegistry(std::string persistence_path,
                          std::chrono::seconds disconnect_threshold,
+                         RunControlPolicy control_policy,
                          std::size_t max_events_per_run)
     : persistence_path_(std::move(persistence_path))
     , disconnect_threshold_(disconnect_threshold)
+    , control_policy_(control_policy)
     , max_events_per_run_(max_events_per_run)
 {}
 
@@ -143,6 +145,61 @@ std::string RunRegistry::infer_client_type(const nlohmann::json& payload,
     return "unknown";
 }
 
+void RunRegistry::set_control_state_locked(RunRecord& run,
+                                           std::string new_control_state,
+                                           std::string reason,
+                                           const std::string& timestamp_utc,
+                                           nlohmann::json extra_payload) {
+    if (run.control_state == new_control_state) {
+        return;
+    }
+
+    run.control_state = std::move(new_control_state);
+    run.updated_at_utc = timestamp_utc;
+
+    nlohmann::json payload{
+        {"controlState", run.control_state},
+        {"reason", std::move(reason)}};
+    for (auto it = extra_payload.begin(); it != extra_payload.end(); ++it) {
+        payload[it.key()] = it.value();
+    }
+
+    append_event_locked(run, "RunControlStateChanged", timestamp_utc, std::move(payload));
+}
+
+bool RunRegistry::maybe_engage_hold_locked(RunRecord& run, std::int64_t now_unix_ms, const std::string& now_utc) {
+    if (!control_policy_.auto_pause_on_disconnect) {
+        return false;
+    }
+    if (run.client_connected || run.hold_engaged || run.disconnected_at_unix_ms <= 0) {
+        return false;
+    }
+
+    const auto hold_delay_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(control_policy_.hold_engage_after_disconnect).count();
+    if ((now_unix_ms - run.disconnected_at_unix_ms) < hold_delay_ms) {
+        return false;
+    }
+
+    run.hold_engaged = true;
+    set_control_state_locked(
+        run,
+        "PauseRequested",
+        "client_disconnected",
+        now_utc,
+        nlohmann::json{
+            {"disconnectedAtUnixMs", run.disconnected_at_unix_ms},
+            {"holdEngageAfterDisconnectSeconds", control_policy_.hold_engage_after_disconnect.count()}});
+
+    append_event_locked(run,
+                        "SafetyHoldEngaged",
+                        now_utc,
+                        nlohmann::json{
+                            {"reason", "client_disconnected"},
+                            {"lastClientType", run.last_client_type}});
+    return true;
+}
+
 void RunRegistry::append_event_locked(RunRecord& run,
                                       std::string type,
                                       std::string timestamp_utc,
@@ -167,16 +224,19 @@ bool RunRegistry::refresh_disconnect_state_locked(std::chrono::system_clock::tim
 
     for (auto& [_, run] : runs_) {
         if (!run.client_connected) {
+            changed = maybe_engage_hold_locked(run, now_ms, now_utc) || changed;
             continue;
         }
         if (run.last_seen_unix_ms <= 0) {
             continue;
         }
         if ((now_ms - run.last_seen_unix_ms) <= threshold_ms) {
+            changed = maybe_engage_hold_locked(run, now_ms, now_utc) || changed;
             continue;
         }
 
         run.client_connected = false;
+        run.disconnected_at_unix_ms = now_ms;
         run.updated_at_utc = now_utc;
 
         append_event_locked(run,
@@ -187,6 +247,7 @@ bool RunRegistry::refresh_disconnect_state_locked(std::chrono::system_clock::tim
                                 {"disconnectThresholdSeconds", disconnect_threshold_.count()},
                                 {"lastClientType", run.last_client_type}});
         changed = true;
+        changed = maybe_engage_hold_locked(run, now_ms, now_utc) || changed;
     }
 
     return changed;
@@ -201,7 +262,9 @@ nlohmann::json RunRegistry::run_summary_json(const RunRecord& run) const {
         {"lastSeenUtc", run.updated_at_utc},
         {"lastClientTimestampUtc", run.last_client_timestamp_utc},
         {"lastClientType", run.last_client_type},
-        {"clientConnected", run.client_connected}};
+        {"clientConnected", run.client_connected},
+        {"controlState", run.control_state},
+        {"holdEngaged", run.hold_engaged}};
 }
 
 nlohmann::json RunRegistry::run_detail_json(const RunRecord& run) const {
@@ -225,6 +288,8 @@ nlohmann::json RunRegistry::run_detail_json(const RunRecord& run) const {
         {"lastClientTimestampUtc", run.last_client_timestamp_utc},
         {"lastClientType", run.last_client_type},
         {"clientConnected", run.client_connected},
+        {"controlState", run.control_state},
+        {"holdEngaged", run.hold_engaged},
         {"lastCheckpoint", run.last_checkpoint},
         {"events", std::move(events)},
     };
@@ -267,10 +332,25 @@ nlohmann::json RunRegistry::accept_checkpoint(const nlohmann::json& payload,
 
     if (!run.client_connected) {
         run.client_connected = true;
+        run.disconnected_at_unix_ms = 0;
         append_event_locked(run,
                             "ClientReconnected",
                             now_utc,
                             nlohmann::json{{"clientType", client_type}});
+
+        if (run.hold_engaged && control_policy_.auto_resume_on_reconnect) {
+            run.hold_engaged = false;
+            set_control_state_locked(
+                run,
+                "ResumeRequested",
+                "client_reconnected",
+                now_utc,
+                nlohmann::json{{"clientType", client_type}});
+            append_event_locked(run,
+                                "SafetyHoldReleased",
+                                now_utc,
+                                nlohmann::json{{"reason", "client_reconnected"}, {"clientType", client_type}});
+        }
     }
 
     run.last_seen_unix_ms = now_unix_ms;
@@ -396,6 +476,73 @@ std::optional<nlohmann::json> RunRegistry::get_events(const std::string& run_id,
     };
 }
 
+nlohmann::json RunRegistry::apply_run_action(const std::string& run_id,
+                                             const nlohmann::json& action_payload) {
+    const auto now = std::chrono::system_clock::now();
+    const auto now_utc = to_utc_iso8601(now);
+
+    std::string action;
+    if (action_payload.contains("action") && action_payload.at("action").is_string()) {
+        action = action_payload.at("action").get<std::string>();
+    }
+    if (action.empty()) {
+        return nlohmann::json{{"accepted", false}, {"error", "missing_action"}};
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = runs_.find(run_id);
+    if (it == runs_.end()) {
+        return nlohmann::json{{"accepted", false}, {"error", "run_not_found"}};
+    }
+
+    auto& run = it->second;
+    const auto actor = action_payload.value("source", std::string("unknown"));
+    const auto reason = action_payload.value("reason", std::string(""));
+
+    if (action == "PauseRequested") {
+        run.hold_engaged = true;
+        set_control_state_locked(
+            run,
+            "PauseRequested",
+            reason.empty() ? "external_request" : reason,
+            now_utc,
+            nlohmann::json{{"source", actor}});
+    } else if (action == "ResumeRequested") {
+        run.hold_engaged = false;
+        set_control_state_locked(
+            run,
+            "ResumeRequested",
+            reason.empty() ? "external_request" : reason,
+            now_utc,
+            nlohmann::json{{"source", actor}});
+    } else if (action == "AcknowledgeControl") {
+        run.hold_engaged = false;
+        set_control_state_locked(
+            run,
+            "None",
+            reason.empty() ? "acknowledged" : reason,
+            now_utc,
+            nlohmann::json{{"source", actor}});
+    } else {
+        return nlohmann::json{{"accepted", false}, {"error", "unsupported_action"}};
+    }
+
+    append_event_locked(run,
+                        "RunActionApplied",
+                        now_utc,
+                        nlohmann::json{
+                            {"action", action},
+                            {"source", actor},
+                            {"reason", reason}});
+
+    save_locked();
+
+    return nlohmann::json{
+        {"accepted", true},
+        {"serverTimeUtc", now_utc},
+        {"runState", run_summary_json(run)}};
+}
+
 bool RunRegistry::save_locked() const {
     try {
         const std::filesystem::path persist_path(persistence_path_);
@@ -420,12 +567,15 @@ bool RunRegistry::save_locked() const {
                 {"createdAtUtc", run.created_at_utc},
                 {"updatedAtUtc", run.updated_at_utc},
                 {"lastSeenUnixMs", run.last_seen_unix_ms},
+                {"disconnectedAtUnixMs", run.disconnected_at_unix_ms},
                 {"sequenceName", run.sequence_name},
                 {"state", run.state},
                 {"lastCheckpointNo", run.last_checkpoint_no},
                 {"lastClientTimestampUtc", run.last_client_timestamp_utc},
                 {"lastClientType", run.last_client_type},
                 {"clientConnected", run.client_connected},
+                {"controlState", run.control_state},
+                {"holdEngaged", run.hold_engaged},
                 {"lastCheckpoint", run.last_checkpoint},
                 {"events", std::move(events_json)},
             });
@@ -435,6 +585,10 @@ bool RunRegistry::save_locked() const {
             {"schemaVersion", 1},
             {"savedAtUtc", to_utc_iso8601(std::chrono::system_clock::now())},
             {"disconnectThresholdSeconds", disconnect_threshold_.count()},
+            {"controlPolicy", nlohmann::json{
+                                  {"autoPauseOnDisconnect", control_policy_.auto_pause_on_disconnect},
+                                  {"autoResumeOnReconnect", control_policy_.auto_resume_on_reconnect},
+                                  {"holdEngageAfterDisconnectSeconds", control_policy_.hold_engage_after_disconnect.count()}}},
             {"nextEventId", next_event_id_},
             {"runs", std::move(runs_json)},
         };
@@ -510,12 +664,18 @@ bool RunRegistry::load() {
         run.created_at_utc = json_string_or_empty(run_json.value("createdAtUtc", nlohmann::json("")));
         run.updated_at_utc = json_string_or_empty(run_json.value("updatedAtUtc", nlohmann::json("")));
         run.last_seen_unix_ms = json_int64_or_zero(run_json.value("lastSeenUnixMs", nlohmann::json(0)));
+        run.disconnected_at_unix_ms = json_int64_or_zero(run_json.value("disconnectedAtUnixMs", nlohmann::json(0)));
         run.sequence_name = json_string_or_empty(run_json.value("sequenceName", nlohmann::json("")));
         run.state = json_string_or_empty(run_json.value("state", nlohmann::json("")));
         run.last_checkpoint_no = json_uint64_or_zero(run_json.value("lastCheckpointNo", nlohmann::json(0)));
         run.last_client_timestamp_utc = json_string_or_empty(run_json.value("lastClientTimestampUtc", nlohmann::json("")));
         run.last_client_type = json_string_or_empty(run_json.value("lastClientType", nlohmann::json("")));
         run.client_connected = run_json.value("clientConnected", true);
+        run.control_state = json_string_or_empty(run_json.value("controlState", nlohmann::json("None")));
+        if (run.control_state.empty()) {
+            run.control_state = "None";
+        }
+        run.hold_engaged = run_json.value("holdEngaged", false);
 
         if (run_json.contains("lastCheckpoint")) {
             run.last_checkpoint = run_json.at("lastCheckpoint");

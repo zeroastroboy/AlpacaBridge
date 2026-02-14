@@ -59,6 +59,8 @@ The root scripts build AlpacaCore, AlpacaHTTP, and AlpacaAgent together, then st
 
 - `ALPACAHTTP_USE_BOOST_BEAST` (default: OFF): set to ON to build AlpacaHTTP with Boost.Beast.
 - `ALPACACORE_ENABLE_ALL_VENDORS` (default: ON): set to OFF to disable vendor drivers.
+- `ALPACACORE_ENABLE_WEEWX` (default: ON): set to OFF to disable WeeWX driver build. On Linux/macOS, requires `libcurl` when ON. On Windows, WeeWX uses WinHTTP.
+- `ALPACACORE_REQUIRE_WEEWX` (default: OFF in CMake): when ON, missing WeeWX dependencies fail configure instead of skipping.
 - `ALPACABRIDGE_BUILD_AGENT` (default: ON): set to OFF to skip building and running AlpacaAgent in the root scripts.
 - `ALPACA_BUILD_CONFIG` (Windows only): set to `Debug` or `Release` for multi-config generators.
 

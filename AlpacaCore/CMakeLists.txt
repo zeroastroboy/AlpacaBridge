@@ -19,6 +19,7 @@ option(ALPACACORE_ENABLE_QHY "Enable QHY vendor support" OFF)
 option(ALPACACORE_ENABLE_IOPTRON "Enable iOptron vendor support" OFF)
 option(ALPACACORE_ENABLE_SYNSCAN "Enable SynScan vendor support" OFF)
 option(ALPACACORE_ENABLE_WEEWX "Enable WeeWX vendor support" OFF)
+option(ALPACACORE_REQUIRE_WEEWX "Fail configure if WeeWX dependencies are missing when WeeWX is requested" OFF)
 
 # If ALPACACORE_ENABLE_ALL_VENDORS is set, enable all implemented vendor drivers
 # Note: Only enable vendors that are actually implemented (have source files)

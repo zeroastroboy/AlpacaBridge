@@ -15,7 +15,16 @@
 #include <alpacacore/alpaca_errors.h>
 #include <alpacacore/util/error_handling.h>
 #include <alpacacore/util/logging.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <winhttp.h>
+#else
 #include <curl/curl.h>
+#endif
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -187,6 +196,93 @@ SensorSnapshot parse_snapshot(std::string_view payload) {
     return snapshot;
 }
 
+#ifdef _WIN32
+
+std::wstring utf8_to_wide(const std::string& text) {
+    if (text.empty()) {
+        return std::wstring();
+    }
+
+    int required = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, nullptr, 0);
+    if (required <= 0) {
+        throw AlpacaException("Unable to convert URL to UTF-16", AlpacaError::DriverException);
+    }
+
+    std::wstring wide(static_cast<size_t>(required), L'\0');
+    int converted = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wide.data(), required);
+    if (converted <= 0) {
+        throw AlpacaException("Unable to convert URL to UTF-16", AlpacaError::DriverException);
+    }
+
+    wide.resize(static_cast<size_t>(converted - 1));
+    return wide;
+}
+
+std::string win32_error_string(DWORD error_code) {
+    LPSTR message_buffer = nullptr;
+    DWORD length = FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr,
+        error_code,
+        0,
+        reinterpret_cast<LPSTR>(&message_buffer),
+        0,
+        nullptr);
+    if (length == 0 || !message_buffer) {
+        return "WinHTTP error " + std::to_string(error_code);
+    }
+
+    std::string message(message_buffer, length);
+    LocalFree(message_buffer);
+    while (!message.empty() && (message.back() == '\r' || message.back() == '\n')) {
+        message.pop_back();
+    }
+    return message;
+}
+
+class WinHttpHandle {
+public:
+    explicit WinHttpHandle(HINTERNET handle = nullptr) : handle_(handle) {}
+    ~WinHttpHandle() {
+        reset();
+    }
+
+    WinHttpHandle(const WinHttpHandle&) = delete;
+    WinHttpHandle& operator=(const WinHttpHandle&) = delete;
+
+    WinHttpHandle(WinHttpHandle&& other) noexcept : handle_(other.handle_) {
+        other.handle_ = nullptr;
+    }
+    WinHttpHandle& operator=(WinHttpHandle&& other) noexcept {
+        if (this != &other) {
+            reset();
+            handle_ = other.handle_;
+            other.handle_ = nullptr;
+        }
+        return *this;
+    }
+
+    HINTERNET get() const {
+        return handle_;
+    }
+
+    explicit operator bool() const {
+        return handle_ != nullptr;
+    }
+
+private:
+    void reset() {
+        if (handle_) {
+            WinHttpCloseHandle(handle_);
+            handle_ = nullptr;
+        }
+    }
+
+    HINTERNET handle_;
+};
+
+#else
+
 size_t curl_write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
     if (!userdata) {
         return 0;
@@ -201,7 +297,146 @@ void ensure_curl_global_init() {
     std::call_once(init_flag, []() { curl_global_init(CURL_GLOBAL_DEFAULT); });
 }
 
+#endif
+
 std::string http_get(const std::string& url, std::chrono::milliseconds timeout) {
+#ifdef _WIN32
+    const std::wstring wide_url = utf8_to_wide(url);
+
+    URL_COMPONENTS components{};
+    components.dwStructSize = sizeof(components);
+    components.dwSchemeLength = static_cast<DWORD>(-1);
+    components.dwHostNameLength = static_cast<DWORD>(-1);
+    components.dwUrlPathLength = static_cast<DWORD>(-1);
+    components.dwExtraInfoLength = static_cast<DWORD>(-1);
+
+    if (!WinHttpCrackUrl(wide_url.c_str(), 0, 0, &components)) {
+        throw AlpacaException(
+            "Invalid WeeWX URL: " + win32_error_string(GetLastError()),
+            AlpacaError::DriverException);
+    }
+
+    const std::wstring host(components.lpszHostName, components.dwHostNameLength);
+    std::wstring path = components.dwUrlPathLength > 0
+        ? std::wstring(components.lpszUrlPath, components.dwUrlPathLength)
+        : L"/";
+    if (components.dwExtraInfoLength > 0) {
+        path.append(components.lpszExtraInfo, components.dwExtraInfoLength);
+    }
+
+    WinHttpHandle session(WinHttpOpen(
+        L"AlpacaBridge-WeeWX/1.0",
+        WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        WINHTTP_NO_PROXY_NAME,
+        WINHTTP_NO_PROXY_BYPASS,
+        0));
+    if (!session) {
+        throw AlpacaException(
+            "Unable to initialize HTTP client: " + win32_error_string(GetLastError()),
+            AlpacaError::DriverException);
+    }
+
+    const long long timeout_ms = std::max<long long>(1, timeout.count());
+    const int timeout_win32 = timeout_ms > static_cast<long long>(std::numeric_limits<int>::max())
+        ? std::numeric_limits<int>::max()
+        : static_cast<int>(timeout_ms);
+    if (!WinHttpSetTimeouts(session.get(), timeout_win32, timeout_win32, timeout_win32, timeout_win32)) {
+        throw AlpacaException(
+            "Unable to configure HTTP timeouts: " + win32_error_string(GetLastError()),
+            AlpacaError::DriverException);
+    }
+
+    WinHttpHandle connect(WinHttpConnect(session.get(), host.c_str(), components.nPort, 0));
+    if (!connect) {
+        throw AlpacaException(
+            "Unable to connect HTTP client: " + win32_error_string(GetLastError()),
+            AlpacaError::DriverException);
+    }
+
+    DWORD flags = 0;
+    if (components.nScheme == INTERNET_SCHEME_HTTPS) {
+        flags |= WINHTTP_FLAG_SECURE;
+    }
+
+    WinHttpHandle request(WinHttpOpenRequest(
+        connect.get(),
+        L"GET",
+        path.c_str(),
+        nullptr,
+        WINHTTP_NO_REFERER,
+        WINHTTP_DEFAULT_ACCEPT_TYPES,
+        flags));
+    if (!request) {
+        throw AlpacaException(
+            "Unable to open HTTP request: " + win32_error_string(GetLastError()),
+            AlpacaError::DriverException);
+    }
+
+    if (!WinHttpSendRequest(
+            request.get(),
+            WINHTTP_NO_ADDITIONAL_HEADERS,
+            0,
+            WINHTTP_NO_REQUEST_DATA,
+            0,
+            0,
+            0)) {
+        throw AlpacaException(
+            "HTTP request failed: " + win32_error_string(GetLastError()),
+            AlpacaError::DriverException);
+    }
+
+    if (!WinHttpReceiveResponse(request.get(), nullptr)) {
+        throw AlpacaException(
+            "HTTP response failed: " + win32_error_string(GetLastError()),
+            AlpacaError::DriverException);
+    }
+
+    DWORD status_code = 0;
+    DWORD status_code_size = sizeof(status_code);
+    if (!WinHttpQueryHeaders(
+            request.get(),
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            WINHTTP_HEADER_NAME_BY_INDEX,
+            &status_code,
+            &status_code_size,
+            WINHTTP_NO_HEADER_INDEX)) {
+        throw AlpacaException(
+            "Unable to read HTTP status: " + win32_error_string(GetLastError()),
+            AlpacaError::DriverException);
+    }
+
+    std::string response;
+    while (true) {
+        DWORD bytes_available = 0;
+        if (!WinHttpQueryDataAvailable(request.get(), &bytes_available)) {
+            throw AlpacaException(
+                "Unable to read HTTP payload: " + win32_error_string(GetLastError()),
+                AlpacaError::DriverException);
+        }
+        if (bytes_available == 0) {
+            break;
+        }
+
+        std::string chunk(bytes_available, '\0');
+        DWORD bytes_read = 0;
+        if (!WinHttpReadData(request.get(), chunk.data(), bytes_available, &bytes_read)) {
+            throw AlpacaException(
+                "Unable to read HTTP payload: " + win32_error_string(GetLastError()),
+                AlpacaError::DriverException);
+        }
+        if (bytes_read == 0) {
+            break;
+        }
+        chunk.resize(bytes_read);
+        response.append(chunk);
+    }
+
+    if (status_code >= 400) {
+        throw AlpacaException("HTTP request returned status " + std::to_string(status_code), AlpacaError::DriverException);
+    }
+
+    return response;
+#else
     ensure_curl_global_init();
     CURL* curl = curl_easy_init();
     if (!curl) {
@@ -233,6 +468,7 @@ std::string http_get(const std::string& url, std::chrono::milliseconds timeout) 
     }
 
     return response;
+#endif
 }
 
 class WeeWxObservingConditionsDriver final : public ObservingConditionsDriver {

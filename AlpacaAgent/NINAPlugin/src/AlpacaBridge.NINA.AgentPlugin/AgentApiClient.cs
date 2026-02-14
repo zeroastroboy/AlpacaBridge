@@ -10,6 +10,7 @@
 // If you use this program to provide a network-accessible service, appliance,
 // or any commercial offering, you must comply with all SSPL v1 requirements.
 
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 
@@ -17,12 +18,6 @@ namespace AlpacaBridge.NINA.AgentPlugin;
 
 public sealed class AgentApiClient
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-    };
-
     private readonly HttpClient _http;
 
     public AgentApiClient(HttpClient http)
@@ -35,22 +30,48 @@ public sealed class AgentApiClient
         string endpoint = "/agent/v1/checkpoints",
         CancellationToken cancellationToken = default)
     {
-        var response = await _http.PostAsJsonAsync(endpoint, checkpoint, JsonOptions, cancellationToken)
-            .ConfigureAwait(false);
-
-        var payload = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (payload.ValueKind == JsonValueKind.Object)
+        HttpResponseMessage response;
+        try
         {
-            var accepted = TryGetBool(payload, "accepted");
-            var ignored = TryGetBool(payload, "ignored");
-            var reason = TryGetString(payload, "reason");
-            var error = TryGetString(payload, "error");
-            return new AgentCheckpointResponse(accepted, ignored, reason, error);
+            response = await _http.PostAsJsonAsync(endpoint, checkpoint, AgentJson.SerializerOptions, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new AgentCheckpointResponse(false, false, null, ex.Message, null, true);
+        }
+        catch (HttpRequestException ex)
+        {
+            return new AgentCheckpointResponse(false, false, null, ex.Message, null, true);
         }
 
-        return new AgentCheckpointResponse(response.IsSuccessStatusCode, false, null, null);
+        JsonElement? payload = await TryReadJsonAsync(response, cancellationToken).ConfigureAwait(false);
+        var statusCode = (int)response.StatusCode;
+
+        if (payload.HasValue && payload.Value.ValueKind == JsonValueKind.Object)
+        {
+            var accepted = TryGetBool(payload.Value, "accepted");
+            var ignored = TryGetBool(payload.Value, "ignored");
+            var reason = TryGetString(payload.Value, "reason");
+            var error = TryGetString(payload.Value, "error");
+
+            if (accepted || ignored)
+            {
+                return new AgentCheckpointResponse(accepted, ignored, reason, error, statusCode, false);
+            }
+        }
+
+        if (response.IsSuccessStatusCode)
+        {
+            return new AgentCheckpointResponse(true, false, null, null, statusCode, false);
+        }
+
+        var transient = IsTransientStatus(response.StatusCode);
+        var fallbackError = payload.HasValue && payload.Value.ValueKind == JsonValueKind.Object
+            ? TryGetString(payload.Value, "error")
+            : null;
+
+        return new AgentCheckpointResponse(false, false, null, fallbackError ?? response.ReasonPhrase, statusCode, transient);
     }
 
     public Task<JsonElement?> GetRunAsync(string runId, CancellationToken cancellationToken = default) =>
@@ -71,14 +92,22 @@ public sealed class AgentApiClient
 
     private async Task<JsonElement?> GetJsonAsync(string path, CancellationToken cancellationToken)
     {
-        var response = await _http.GetAsync(path, cancellationToken).ConfigureAwait(false);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _http.GetAsync(path, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+
         if (!response.IsSuccessStatusCode)
         {
             return null;
         }
 
-        return await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions, cancellationToken)
-            .ConfigureAwait(false);
+        return await TryReadJsonAsync(response, cancellationToken).ConfigureAwait(false);
     }
 
     private static bool TryGetBool(JsonElement payload, string propertyName)
@@ -97,5 +126,26 @@ public sealed class AgentApiClient
             return null;
         }
         return value.GetString();
+    }
+
+    private static async Task<JsonElement?> TryReadJsonAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await response.Content.ReadFromJsonAsync<JsonElement>(AgentJson.SerializerOptions, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool IsTransientStatus(HttpStatusCode statusCode)
+    {
+        var numeric = (int)statusCode;
+        return statusCode == HttpStatusCode.RequestTimeout ||
+               statusCode == HttpStatusCode.TooManyRequests ||
+               numeric >= 500;
     }
 }

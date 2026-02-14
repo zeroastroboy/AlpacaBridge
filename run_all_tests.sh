@@ -8,6 +8,7 @@ HTTP_DIR="${ROOT_DIR}/AlpacaHTTP"
 AGENT_DIR="${ROOT_DIR}/AlpacaAgent"
 HTTP_BEAST="${ALPACAHTTP_USE_BOOST_BEAST:-OFF}"
 CORE_VENDORS="${ALPACACORE_ENABLE_ALL_VENDORS:-ON}"
+CORE_WEEWX="${ALPACACORE_ENABLE_WEEWX:-ON}"
 
 if [[ ! -d "${CORE_DIR}" ]]; then
   echo "AlpacaCore not found at ${CORE_DIR}"
@@ -40,7 +41,9 @@ fi
 echo "== AlpacaCore =="
 cmake -S "${CORE_DIR}" -B "${CORE_DIR}/build" \
   -DALPACACORE_BUILD_TESTS=ON \
-  -DALPACACORE_ENABLE_ALL_VENDORS="${CORE_VENDORS}"
+  -DALPACACORE_ENABLE_ALL_VENDORS="${CORE_VENDORS}" \
+  -DALPACACORE_ENABLE_WEEWX="${CORE_WEEWX}" \
+  -DALPACACORE_REQUIRE_WEEWX="${CORE_WEEWX}"
 cmake --build "${CORE_DIR}/build" --parallel "${PARALLEL}"
 ctest --test-dir "${CORE_DIR}/build" --output-on-failure -j "${PARALLEL}"
 
@@ -48,7 +51,9 @@ echo "== AlpacaHTTP =="
 cmake -S "${HTTP_DIR}" -B "${HTTP_DIR}/build" \
   -DALPACAHTTP_BUILD_TESTS=ON \
   -DALPACAHTTP_USE_BOOST_BEAST="${HTTP_BEAST}" \
-  -DALPACACORE_ENABLE_ALL_VENDORS="${CORE_VENDORS}"
+  -DALPACACORE_ENABLE_ALL_VENDORS="${CORE_VENDORS}" \
+  -DALPACACORE_ENABLE_WEEWX="${CORE_WEEWX}" \
+  -DALPACACORE_REQUIRE_WEEWX="${CORE_WEEWX}"
 cmake --build "${HTTP_DIR}/build" --parallel "${PARALLEL}"
 ctest --test-dir "${HTTP_DIR}/build" --output-on-failure -j "${PARALLEL}"
 

@@ -17,9 +17,14 @@ public static class AgentCheckpointBuilder
     public static AgentCheckpoint FromSnapshot(
         ISequenceRuntimeSnapshot snapshot,
         AgentEnvironment environment,
+        SequencePlanSummary? sequencePlan = null,
         DateTimeOffset? utcNow = null)
     {
         var timestamp = (utcNow ?? DateTimeOffset.UtcNow).ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+        var frameTotal = snapshot.FrameTotal ?? sequencePlan?.PlannedExposureCount;
+        var sequenceName = string.IsNullOrWhiteSpace(snapshot.SequenceName)
+            ? sequencePlan?.SequenceName ?? "Unknown Sequence"
+            : snapshot.SequenceName;
 
         var current = new AgentCurrentInstruction(
             snapshot.InstructionId,
@@ -28,7 +33,7 @@ public static class AgentCheckpointBuilder
             snapshot.Filter,
             snapshot.ExposureSeconds,
             snapshot.FrameIndex,
-            snapshot.FrameTotal,
+            frameTotal,
             snapshot.EtaSeconds);
 
         var guiding = new AgentGuidingStatus(
@@ -38,15 +43,29 @@ public static class AgentCheckpointBuilder
             snapshot.PHD2Port,
             snapshot.DitherEveryNFrames);
 
+        AgentSequenceSummary? sequenceSummary = null;
+        if (sequencePlan != null)
+        {
+            var steps = sequencePlan.Steps
+                .Select(step => new AgentSequenceExposureStep(step.Filter, step.ExposureSeconds, step.PlannedFrames))
+                .ToArray();
+
+            sequenceSummary = new AgentSequenceSummary(
+                sequencePlan.PlannedExposureCount,
+                sequencePlan.FramesByFilter,
+                steps);
+        }
+
         return new AgentCheckpoint(
             ApiVersion: "1.0",
             RunId: snapshot.RunId,
-            SequenceName: snapshot.SequenceName,
+            SequenceName: sequenceName,
             TimestampUtc: timestamp,
             CheckpointNo: snapshot.CheckpointNo,
             State: snapshot.State,
             Current: current,
             Guiding: guiding,
+            Sequence: sequenceSummary,
             Environment: environment);
     }
 }

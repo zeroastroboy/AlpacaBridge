@@ -29,6 +29,16 @@ public sealed record AgentGuidingStatus(
     int? PHD2Port,
     int? DitherEveryNFrames);
 
+public sealed record AgentSequenceExposureStep(
+    string? Filter,
+    double ExposureSeconds,
+    int PlannedFrames);
+
+public sealed record AgentSequenceSummary(
+    int PlannedExposureCount,
+    IReadOnlyDictionary<string, int> FramesByFilter,
+    IReadOnlyList<AgentSequenceExposureStep> Steps);
+
 public sealed record AgentEnvironment(
     string ClientName,
     string? ClientType,
@@ -45,13 +55,28 @@ public sealed record AgentCheckpoint(
     string State,
     AgentCurrentInstruction? Current,
     AgentGuidingStatus? Guiding,
+    AgentSequenceSummary? Sequence,
     AgentEnvironment Environment);
 
 public sealed record AgentCheckpointResponse(
     bool Accepted,
     bool Ignored,
     string? Reason,
-    string? Error);
+    string? Error,
+    int? StatusCode = null,
+    bool IsTransientFailure = false);
+
+public sealed record AgentSyncOptions(
+    string CheckpointEndpoint,
+    TimeSpan HeartbeatInterval,
+    string SpoolFilePath,
+    int MaxBufferedCheckpoints = 2048)
+{
+    public static AgentSyncOptions Default(string spoolFilePath) => new(
+        CheckpointEndpoint: "/agent/v1/checkpoints",
+        HeartbeatInterval: TimeSpan.FromSeconds(2),
+        SpoolFilePath: spoolFilePath);
+}
 
 public interface ISequenceRuntimeSnapshot
 {
@@ -72,4 +97,9 @@ public interface ISequenceRuntimeSnapshot
     string? PHD2Host { get; }
     int? PHD2Port { get; }
     int? DitherEveryNFrames { get; }
+}
+
+public interface ISequenceRuntimeSnapshotProvider
+{
+    ISequenceRuntimeSnapshot? GetSnapshot();
 }
