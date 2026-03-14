@@ -6,6 +6,8 @@ AlpacaBridge is a unified workspace for building, testing, and running a complet
 
 #### [0.13.0] - 2026-03-12 [CHANGELOG Information](CHANGELOG.md)
 
+**Platform support:** v0.13.0 is the **last release** to support Windows and macOS. Future development will target **Debian Trixie 13 x64** (NUCs) and **ARM** (Raspberry Pi 4/5) only.
+
 ## AlpacaBridge Explained
 
 - ScopeTrader: [Openastro AlpacaBridge Launches and Why it Matters](https://scopetrader.com/openastro-alpacabridge-launches-and-why-it-matters/)
